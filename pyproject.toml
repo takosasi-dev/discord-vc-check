@@ -1,17 +1,22 @@
 [project]
 name = "vccheck"
-version = "0.1.0"
+version = "0.2.0"
 description = "Discord(VcCheck): 通話の音の不具合を、Windows 側から測れる範囲で区間ごとに切り分ける"
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "MIT" }
-# 実行時に使うのは Python 標準ライブラリだけ。測定(録音)を実装する版から PySide6 を使う。
+# CLI が実行時に使うのは Python 標準ライブラリだけ。PySide6 は画面(GUI)にだけ要る。
 dependencies = []
+
+[project.optional-dependencies]
+# 画面(python -m vccheck gui)用。デバイスの一覧に使う QtMultimedia は Addons に入っている。
+# 動作を確かめたのは 6.12.0 だけ。
+gui = ["PySide6-Essentials>=6.12", "PySide6-Addons>=6.12"]
 
 [tool.ruff]
 line-length = 100
 target-version = "py311"
-extend-exclude = ["spike", "results"]
+extend-exclude = ["spike", "results", "build", "dist"]
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "UP", "B"]

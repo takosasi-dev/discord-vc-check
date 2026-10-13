@@ -11,14 +11,15 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 PACKAGE = ROOT / "vccheck"
 SOURCES = sorted(PACKAGE.rglob("*.py"))
+GUI_SOURCES = sorted((PACKAGE / "gui").rglob("*.py"))
 TRACKED_SUFFIXES = {".py", ".json", ".md", ".toml", ".txt", ""}
-SKIP_DIRS = {".git", "spike", "results", "__pycache__", ".pytest_cache", ".mypy_cache",
-             ".ruff_cache", ".venv"}
+SKIP_DIRS = {".git", "spike", "results", "build", "dist", "__pycache__", ".pytest_cache",
+             ".mypy_cache", ".ruff_cache", ".venv"}
 
 
-def hits(pattern: str, flags: int = 0) -> list[str]:
+def hits(pattern: str, flags: int = 0, sources: list[Path] | None = None) -> list[str]:
     found = []
-    for path in SOURCES:
+    for path in SOURCES if sources is None else sources:
         for number, line in enumerate(path.read_text(encoding="utf-8").split("\n"), start=1):
             if re.search(pattern, line, flags):
                 found.append(f"{path.name}:{number}: {line.strip()}")
@@ -34,7 +35,8 @@ def repository_files() -> list[Path]:
 
 
 def test_there_are_sources():
-    assert len(SOURCES) >= 9
+    assert len(SOURCES) >= 19
+    assert len(GUI_SOURCES) >= 9
 
 
 def test_ac14_no_registry_write_api():
@@ -84,9 +86,49 @@ def test_inv9_no_external_commands():
 
 def test_phase_scope_no_audio_or_network_modules_yet():
     """この版は録音・再生・回線の測定を持たない(仕様書 §12 の Phase 3 以降)。"""
-    assert hits(r"^\s*(import|from)\s+(socket|PySide6|ssl|http|ftplib|smtplib)\b") == []
+    assert hits(r"^\s*(import|from)\s+(socket|ssl|http|ftplib|smtplib)\b") == []
     for name in ("capture.py", "tone.py", "net_probe.py"):
         assert not (PACKAGE / name).exists()
+    # PySide6 を使うのは画面(vccheck/gui/)だけ。CLI は PySide6 が無くても動く。
+    outside = [path for path in SOURCES if path not in GUI_SOURCES]
+    assert hits(r"^\s*(import|from)\s+PySide6\b", sources=outside) == []
+    # 録音・再生の部品は、画面からも使わない(デバイスの名前の一覧だけを読む)。
+    assert hits(r"QAudioSource|QAudioSink|QMediaPlayer|QSoundEffect|QMediaRecorder") == []
+
+
+def test_ac_g8_gui_uses_no_colors_or_style_sheets():
+    """画面設計書 AC-G8 の grep と同じ式。"""
+    assert hits(r"setStyleSheet|QPalette|QColor", sources=GUI_SOURCES) == []
+
+
+def test_ac_g10_gui_does_not_import_measuring_or_judging_modules():
+    """画面設計書 AC-G10 の grep と同じ式。画面は実行層(runner.py)だけを呼ぶ。"""
+    names = r"(analysis|judge|segments|rules|sysinfo|capture|net_probe|tone)"
+    assert hits(r"(import|from) +vccheck\." + names, sources=GUI_SOURCES) == []
+    # 「from vccheck import sysinfo」の形でも持ち込まない。
+    assert hits(r"from +vccheck +import +.*\b" + names + r"\b", sources=GUI_SOURCES) == []
+
+
+def test_gui_wording_lives_only_in_texts():
+    """画面に出す文は texts.py に集める(画面設計書に無い文言を、ほかのファイルで足さない)。"""
+    japanese = re.compile(r"[ぁ-んァ-ヶ一-龠]")
+    for path in GUI_SOURCES:
+        # app.py の日本語は、動作確認(smoke)が標準出力に出す行だけ。
+        if path.name in ("texts.py", "app.py"):
+            continue
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        skipped: set[int] = set()
+        for node in ast.walk(tree):
+            if isinstance(node, (ast.Module, ast.ClassDef, ast.FunctionDef)) and node.body:
+                first = node.body[0]
+                if isinstance(first, ast.Expr) and isinstance(first.value, ast.Constant):
+                    skipped.add(id(first.value))  # docstring
+            elif isinstance(node, ast.Raise) and node.exc is not None:
+                skipped.update(id(part) for part in ast.walk(node.exc))  # 例外の文
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Constant) and isinstance(node.value, str):
+                if id(node) not in skipped:
+                    assert not japanese.search(node.value), f"{path.name}:{node.lineno}"
 
 
 @pytest.mark.parametrize("path", SOURCES, ids=lambda p: p.name)

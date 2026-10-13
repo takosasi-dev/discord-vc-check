@@ -59,6 +59,7 @@ SYMPTOMS: Final[dict[str, str]] = {
 
 REASON_SKIPPED: Final = "実行時に指定されて飛ばした"
 REASON_TONE_UNCONFIRMED: Final = "テスト音は確認なしでは再生しない"
+REASON_TONE_NOT_DECLARED: Final = "テスト音の聞こえ方が申告されなかった"
 REASON_S5: Final = (
     "Discord 内部の入力感度・ノイズ抑制・音声サーバーとの往復時間・パケット損失・"
     "Discord 側のミュート状態は、外から読む公式の方法を確認できていないため測らない"

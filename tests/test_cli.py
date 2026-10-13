@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import shutil
+import sys
 from pathlib import Path
 
 import pytest
@@ -176,9 +177,26 @@ def test_argument_errors_exit_1(capsys):
     capsys.readouterr()
 
 
-def test_gui_is_not_implemented_in_this_version(capsys):
-    assert main(["gui"]) == 1
-    assert "この版では未実装" in capsys.readouterr().err
+def test_gui_without_pyside6_says_so_and_exits_nonzero(monkeypatch, capsys):
+    """PySide6 が無い環境。CLI のほかの機能は動き、gui だけが案内を出して終わる。"""
+    for name in list(sys.modules):
+        if name.split(".")[0] in ("PySide6", "shiboken6"):
+            monkeypatch.setitem(sys.modules, name, None)
+        elif name.startswith("vccheck.gui"):
+            monkeypatch.delitem(sys.modules, name)
+    monkeypatch.setitem(sys.modules, "PySide6", None)
+    assert main(["gui"]) == 2
+    err = capsys.readouterr().err
+    assert "PySide6 を読み込めない" in err
+    assert "pip install PySide6-Essentials PySide6-Addons" in err
+    assert main(["gui", "--smoke"]) == 2
+    capsys.readouterr()
+    assert main(["--selftest"]) == 0
+
+
+def test_gui_smoke_option_is_hidden_from_the_help(capsys):
+    assert main(["gui", "--help"]) == 0
+    assert "--smoke" not in capsys.readouterr().out
 
 
 def test_output_stem():

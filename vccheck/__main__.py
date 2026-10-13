@@ -1,69 +1,75 @@
 # CLI(仕様書 §9.1): run・gui・report・check・stats・--selftest と終了コード。
-# config\ の5ファイルの読み込みと形の検査(FR-22)、項目から結果を組み立てる処理、
-# 合成データだけの自己診断(FR-18)もここに置く。
+# 測定そのものと config\ の読み込みは runner.py(実行層)にあり、ここは引数の解釈と表示だけ。
+# 合成データだけの自己診断(FR-18)もここに置く。exe を引数なしで起動したときは GUI を出す。
 from __future__ import annotations
 
 import argparse
 import io
 import math
+import os
 import sys
 import tempfile
-from collections.abc import Callable, Iterable, Sequence
-from dataclasses import dataclass, replace
+from collections.abc import Callable, Sequence
+from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
 from typing import Final, NoReturn
 
-from vccheck import __version__, analysis
+from vccheck import analysis
 from vccheck.io_safe import (
     Identity,
     JsonReadError,
     OutputError,
     OutputExistsError,
-    default_results_dir,
     dump_json,
     read_json,
     write_outputs,
 )
-from vccheck.judge import NOTE_UNCALIBRATED, Thresholds, judge_items, parse_thresholds
+from vccheck.judge import NOTE_UNCALIBRATED
 from vccheck.model import (
     ITEM_IDS,
     ITEM_SPEC_BY_ID,
     MIC_ITEM_IDS,
-    NET_ITEM_IDS,
     REASON_SKIPPED,
-    REASON_TONE_UNCONFIRMED,
     SYMPTOMS,
-    TONE_ITEM_IDS,
     WORDS,
     Conditions,
     ConfigError,
     Measure,
-    NetTargets,
     RawItem,
     Result,
-    RunInfo,
     check_result,
-    count_words,
     failed,
     fixed_unchecked_items,
     is_number,
     measured,
-    parse_measure,
-    parse_net_targets,
     result_from_obj,
     result_to_obj,
     unchecked,
 )
 from vccheck.report_md import render_markdown
-from vccheck.rules import (
-    NO_CANDIDATE_TEXT,
-    Rule,
-    parse_advice,
-    parse_rules,
-    pick_candidates,
+from vccheck.rules import NO_CANDIDATE_TEXT
+from vccheck.runner import (
+    NOT_IMPLEMENTED,
+    CannotMeasureError,
+    Config,
+    ResultShapeError,
+    RunRequest,
+    build_result,
+    default_config_dir,
+    is_frozen,
+    load_config,
+    load_measure,
+    output_names,
+    output_stem,
+    perform_run,
+    resolve_results_dir,
+    unsupported_reason,
 )
-from vccheck.segments import summarize_segments
+
+# 実行層へ移した名前のうち、テストと合成データが従来どおりここから取る物。
+__all__ = ["Config", "build_result", "default_config_dir", "load_config", "main",
+           "output_stem"]
 
 EXIT_OK: Final = 0
 EXIT_ERROR: Final = 1
@@ -71,9 +77,6 @@ EXIT_CANNOT_MEASURE: Final = 2
 EXIT_CHECK: Final = 3
 EXIT_EXISTS: Final = 4
 EXIT_ABORTED: Final = 5
-
-NOT_IMPLEMENTED: Final = "この版では未実装"
-REASON_DEVICE_NOT_READ: Final = "この版ではデバイスの形式を読まない(録音の実装と同時に対応する)"
 
 
 class CliError(Exception):
@@ -90,72 +93,6 @@ class _Parser(argparse.ArgumentParser):
         self.print_usage(sys.stderr)
         print(f"{self.prog}: {message}", file=sys.stderr)
         raise SystemExit(EXIT_ERROR)
-
-
-@dataclass(frozen=True)
-class Config:
-    measure: Measure
-    thresholds: Thresholds
-    net_targets: NetTargets
-    rules: tuple[Rule, ...]
-    advice: dict[str, str]
-
-
-def default_config_dir() -> Path:
-    return Path(__file__).resolve().parent.parent / "config"
-
-
-def _read_config_json(config_dir: Path, name: str) -> object:
-    try:
-        return read_json(config_dir / name)
-    except JsonReadError as error:
-        raise ConfigError(str(error)) from error
-    except OSError as error:
-        raise ConfigError(f"{name}: 読めない({type(error).__name__})") from error
-
-
-def load_measure(config_dir: Path) -> Measure:
-    return parse_measure(_read_config_json(config_dir, "measure.json"))
-
-
-def load_config(config_dir: Path) -> Config:
-    """5ファイルの形を検査して読む。壊れていれば ConfigError(FR-22)。"""
-    rules = parse_rules(_read_config_json(config_dir, "rules.json"))
-    return Config(
-        measure=load_measure(config_dir),
-        thresholds=parse_thresholds(_read_config_json(config_dir, "thresholds.json")),
-        net_targets=parse_net_targets(_read_config_json(config_dir, "net_targets.json")),
-        rules=tuple(rules),
-        advice=parse_advice(_read_config_json(config_dir, "advice.json"), rules),
-    )
-
-
-def build_result(raws: Iterable[RawItem], *, symptoms: Sequence[str], conditions: Conditions,
-                 measured_at: datetime, created_at: datetime, thresholds: Thresholds,
-                 rules: Sequence[Rule], advice: dict[str, str]) -> Result:
-    """項目 → 判定 → 区間 → 原因の可能性 → 件数、の順に結果を組み立てる。"""
-    items = judge_items(raws, thresholds)
-    done, total = thresholds.calibrated_counts()
-    return Result(
-        app_version=__version__,
-        created_at=created_at.isoformat(timespec="seconds"),
-        run=RunInfo(
-            measured_at=measured_at.replace(tzinfo=None).isoformat(timespec="seconds"),
-            symptoms=tuple(symptoms),
-            conditions=conditions,
-        ),
-        calibrated=done,
-        calibrated_total=total,
-        items=tuple(items),
-        segments=tuple(summarize_segments(items)),
-        candidates=tuple(pick_candidates(items, symptoms, rules, advice)),
-        counts=count_words(items),
-    )
-
-
-def output_stem(measured_at: datetime) -> str:
-    """結果ファイルの名前の「日時」の部分。"""
-    return measured_at.strftime("%Y-%m-%d_%H%M%S")
 
 
 def _read_result(path: Path) -> Result:
@@ -186,7 +123,7 @@ def _out_dir(out: str | None, config_dir: Path) -> Path:
     if out is not None:
         return Path(out)
     try:
-        return default_results_dir(load_measure(config_dir).results_dir)
+        return resolve_results_dir(load_measure(config_dir).results_dir)
     except (ConfigError, OutputError) as error:
         raise CliError(EXIT_ERROR, str(error)) from error
 
@@ -435,17 +372,6 @@ def cmd_selftest(config_dir: Path) -> int:
     return EXIT_OK
 
 
-def _skipped_raws() -> list[RawItem]:
-    """この版の run が測らない項目。飛ばした測定は未チェックにする(§9.1)。"""
-    return [
-        *(unchecked(i, REASON_SKIPPED) for i in (*MIC_ITEM_IDS, *NET_ITEM_IDS)),
-        *(unchecked(i, REASON_TONE_UNCONFIRMED) for i in TONE_ITEM_IDS),
-        unchecked("dev.in.format", REASON_DEVICE_NOT_READ),
-        unchecked("dev.out.format", REASON_DEVICE_NOT_READ),
-        *fixed_unchecked_items(),
-    ]
-
-
 def cmd_run(args: argparse.Namespace, config_dir: Path) -> int:
     """この版は Windows の設定の読み取りと PC の負荷だけを測る(--skip-mic --skip-net)。"""
     try:
@@ -453,14 +379,11 @@ def cmd_run(args: argparse.Namespace, config_dir: Path) -> int:
     except ConfigError as error:
         raise CliError(EXIT_ERROR, f"設定ファイルが壊れている。何も測っていない: {error}"
                        ) from error
-    if not (args.skip_mic and args.skip_net):
-        raise CliError(
-            EXIT_ERROR,
-            f"run: マイクと回線の測定は{NOT_IMPLEMENTED}。"
-            "--skip-mic と --skip-net を両方付ければ、Windows の設定と PC の負荷だけを測る",
-        )
-    if args.confirm_tone:
-        raise CliError(EXIT_ERROR, f"run: テスト音は{NOT_IMPLEMENTED}")
+    request = RunRequest(symptoms=tuple(dict.fromkeys(args.symptom)), skip_mic=args.skip_mic,
+                         skip_net=args.skip_net, confirm_tone=args.confirm_tone)
+    reason = unsupported_reason(request)
+    if reason is not None:
+        raise CliError(EXIT_ERROR, reason)
     if args.input is not None or args.output is not None:
         raise CliError(
             EXIT_ERROR,
@@ -469,37 +392,36 @@ def cmd_run(args: argparse.Namespace, config_dir: Path) -> int:
     out_dir = _out_dir(args.out, config_dir)
     measured_at = datetime.now()
     stem = output_stem(measured_at)
-    names = (f"{stem}.json", f"{stem}.md", f"{stem}.share.md")
-    for name in names:
+    for name in output_names(stem):
         if (out_dir / name).exists():
             raise CliError(EXIT_EXISTS, f"同名の出力が既にある: {name}")
-    try:
-        from vccheck import sysinfo
-    except ImportError as error:
-        raise CliError(EXIT_CANNOT_MEASURE, "測定を始められない(Windows でしか動かない)") from error
-    measure = config.measure
-    seconds = measure.silent_s + measure.speech_s
+    seconds = config.measure.silent_s + config.measure.speech_s
     print(f"Windows の設定を読み、PC の負荷を {seconds:g} 秒測る(マイクと回線は測らない)")
-    raws = [*sysinfo.collect(measure), *_skipped_raws()]
-    result = build_result(
-        raws, symptoms=list(dict.fromkeys(args.symptom)),
-        conditions=Conditions(None, None, None, None, measure.silent_s, measure.speech_s,
-                              measure.net_attempts),
-        measured_at=measured_at, created_at=measured_at.astimezone(),
-        thresholds=config.thresholds, rules=config.rules, advice=config.advice,
-    )
-    obj = result_to_obj(result)
-    violations = check_result(obj)
-    if violations:
-        raise CliError(EXIT_ERROR, "結果が形の規則に合わない。何も保存していない", *violations)
-    written = _write(out_dir, {
-        names[0]: dump_json(obj),
-        names[1]: render_markdown(result),
-        names[2]: render_markdown(result, share=True),
-    })
-    for path in written:
+    try:
+        output = perform_run(request, config, measured_at=measured_at)
+    except CannotMeasureError as error:
+        raise CliError(EXIT_CANNOT_MEASURE, str(error)) from error
+    except ResultShapeError as error:
+        raise CliError(EXIT_ERROR, "結果が形の規則に合わない。何も保存していない",
+                       *error.violations) from error
+    for path in _write(out_dir, output.files(stem)):
         print(path)
     return EXIT_OK
+
+
+def cmd_gui(smoke: bool, config_dir: Path) -> int:
+    """ウィザードの画面を出す。PySide6 が無い環境でも、CLI のほかの機能は動く。"""
+    try:
+        from vccheck.gui.app import run_gui
+    except ImportError as error:
+        if not (error.name or "").startswith(("PySide6", "shiboken6")):
+            raise
+        raise CliError(
+            EXIT_CANNOT_MEASURE,
+            "gui: PySide6 を読み込めないため、画面を出せない",
+            "`pip install PySide6-Essentials PySide6-Addons` の後で、もう一度実行する",
+        ) from error
+    return run_gui(config_dir=config_dir, smoke=smoke)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -515,7 +437,9 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--skip-net", action="store_true", help="回線の測定を飛ばす")
     run.add_argument("--confirm-tone", action="store_true", help="テスト音の再生を確認済みにする")
     run.add_argument("--out", help="保存先のフォルダ")
-    sub.add_parser("gui", help=f"ウィザードの画面({NOT_IMPLEMENTED})")
+    gui = sub.add_parser("gui", help="ウィザードの画面(PySide6 が要る)")
+    # 画面を作ってすぐ閉じる動作確認用(exe のビルドの後の確認に使う)。
+    gui.add_argument("--smoke", action="store_true", help=argparse.SUPPRESS)
     report = sub.add_parser("report", help="結果の JSON から Markdown を書き出す")
     report.add_argument("result")
     report.add_argument("--share", action="store_true", help="共有用(名前をマスク)")
@@ -527,17 +451,35 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _ensure_streams() -> None:
+    """コンソールの無い exe では標準出力・標準エラーが None になる。捨て先につないでおく。"""
+    if sys.stdout is None:
+        sys.stdout = open(os.devnull, "w", encoding="utf-8")
+    if sys.stderr is None:
+        sys.stderr = open(os.devnull, "w", encoding="utf-8")
+
+
 def _relax_streams() -> None:
     for stream in (sys.stdout, sys.stderr):
-        if isinstance(stream, io.TextIOWrapper):
+        if not isinstance(stream, io.TextIOWrapper):
+            continue
+        if is_frozen():
+            # exe は環境変数(PYTHONUTF8)に頼れないので、出力の文字コードをここで決める。
+            stream.reconfigure(encoding="utf-8", errors="backslashreplace")
+        else:
             stream.reconfigure(errors="backslashreplace")
 
 
 def main(argv: Sequence[str] | None = None, *, config_dir: Path | None = None) -> int:
+    _ensure_streams()
     _relax_streams()
     parser = build_parser()
+    given = list(sys.argv[1:] if argv is None else argv)
+    if argv is None and is_frozen() and not given:
+        # exe を引数なしで起動したとき(ダブルクリック)は、画面を出す。
+        given = ["gui"]
     try:
-        args = parser.parse_args(argv)
+        args = parser.parse_args(given)
     except SystemExit as stop:
         return stop.code if isinstance(stop.code, int) else EXIT_ERROR
     folder = default_config_dir() if config_dir is None else config_dir
@@ -553,7 +495,7 @@ def main(argv: Sequence[str] | None = None, *, config_dir: Path | None = None) -
         if args.command == "run":
             return cmd_run(args, folder)
         if args.command == "gui":
-            raise CliError(EXIT_ERROR, f"gui: {NOT_IMPLEMENTED}")
+            return cmd_gui(args.smoke, folder)
     except CliError as error:
         for line in error.lines:
             print(line, file=sys.stderr)

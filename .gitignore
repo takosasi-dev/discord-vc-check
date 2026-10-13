@@ -15,7 +15,8 @@ venv/
 .coverage
 htmlcov/
 
-# ビルドの出力
+# ビルドの出力(exe は tools/build_exe.py で作る。リポジトリには入れない)
 build/
 dist/
+*.spec
 *.egg-info/

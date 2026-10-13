@@ -16,7 +16,7 @@ from vccheck.model import ITEM_IDS, check_result, failed, measured
 SKIP = ["--skip-mic", "--skip-net"]
 
 
-def fake_collect(_measure):
+def fake_collect(_measure, **_hooks):
     return [
         measured("env.discord_running", True, "確認した名前: Discord.exe"),
         measured("priv.mic_machine", "Allow"),
@@ -29,7 +29,7 @@ def fake_collect(_measure):
     ]
 
 
-def forbidden_collect(_measure):
+def forbidden_collect(_measure, **_hooks):
     raise AssertionError("測ってはならない場面で測定が始まった")
 
 
@@ -123,7 +123,7 @@ def test_ac16_existing_output_exits_4_and_adds_nothing(tmp_path, monkeypatch):
 
 
 def test_fr21_cancel_saves_nothing_and_exits_5(tmp_path, monkeypatch):
-    def cancelled(_measure):
+    def cancelled(_measure, **_hooks):
         raise KeyboardInterrupt
 
     monkeypatch.setattr(sysinfo, "collect", cancelled)
@@ -133,7 +133,7 @@ def test_fr21_cancel_saves_nothing_and_exits_5(tmp_path, monkeypatch):
 
 
 def test_run_all_failed_still_passes_check(tmp_path, monkeypatch):
-    def all_failed(_measure):
+    def all_failed(_measure, **_hooks):
         return [failed(i, "PermissionError") for i in (
             "env.discord_running", "priv.mic_machine", "priv.mic_user", "priv.mic_discord",
             "duck.pref", "sys.cpu_avg_pct", "sys.cpu_max_pct", "sys.mem_load_pct")]

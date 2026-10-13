@@ -261,13 +261,17 @@ def sample_load(duration_s: float, interval_ms: float, *,
     return [*cpu_items, measured("sys.mem_load_pct", max(mem))]
 
 
-def collect(measure: Measure) -> list[RawItem]:
-    """Windows の設定の5項目と、負荷の3項目を読む。何も書き換えない。"""
+def collect(measure: Measure, *, sleep: Callable[[float], None] = time.sleep) -> list[RawItem]:
+    """Windows の設定の5項目と、負荷の3項目を読む。何も書き換えない。
+
+    sleep は負荷を測る間の待ち方(中止できる待ち方を、実行層が渡す)。
+    """
     return [
         read_discord_running(measure.discord_process_names),
         read_mic_consent("priv.mic_machine", winreg.HKEY_LOCAL_MACHINE),
         read_mic_consent("priv.mic_user", winreg.HKEY_CURRENT_USER),
         read_mic_consent_discord(),
         read_ducking(),
-        *sample_load(measure.silent_s + measure.speech_s, measure.sys_interval_ms),
+        *sample_load(measure.silent_s + measure.speech_s, measure.sys_interval_ms,
+                     sleep=sleep),
     ]
