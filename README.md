@@ -24,7 +24,7 @@ pip install PySide6-Essentials PySide6-Addons
 python -m vccheck gui
 ```
 
-または、自分でビルドした `VcCheck.exe` を引数なしで起動します(「exe を作る」を見てください)。
+または、`VcCheck.exe` を引数なしで起動します(「exe を作る」を見てください)。
 
 - デバイスの一覧に使う QtMultimedia は `PySide6-Addons` に入っています。`PySide6-Essentials` だけだと、「QtMultimedia を読み込めないため、測定を始められません」の画面で止まります
 - PySide6 が入っていない環境では、`python -m vccheck gui` は案内を出して終了コード 2 で終わります。CLI のほかの機能は、PySide6 が無くても動きます
@@ -91,7 +91,7 @@ python -m vccheck stats  <結果.json> [<結果.json> ...]
 
 ## exe を作る
 
-exe はリポジトリに入れておらず、配布もしていません。使うときは、自分の PC でビルドします。
+exe はリポジトリに入れていません。ビルド済みの exe は [Releases](https://github.com/takosasi-dev/discord-vc-check/releases) から取れます。自分の PC でビルドするときは、次のようにします。
 
 ```
 pip install pyinstaller PySide6-Essentials PySide6-Addons
@@ -136,7 +136,7 @@ python tools/build_exe.py --smoke
 - CPU 使用率・メモリ使用率は、タスクマネージャーの表示と突き合わせていません
 - GUI の画面設計は、マイク・回線・テスト音が測れる前提で書かれています。この版では、その3つのチェックを無効にし、「この版では、マイク・回線・テスト音の測定はまだ実装していません」と画面に出しています。テスト音の2つのダイアログと、測定中の画面の残り秒の表示は、スタブでしか動かしていません
 - GUI と exe を確かめたのは、開発機1台(Windows 11、PySide6 6.12.0)だけです
-- 個人用のツールとして作っていて、exe の配布はしていません
+- 個人用のツールとして作っています。Releases に置いた exe も開発機で作った物で、ほかの PC では確かめていません
 
 ## Discord には TCP の接続確立以外で触れない設計
 
