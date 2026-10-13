@@ -1,0 +1,5 @@
+{"_provisional": true, "silent_s": 3, "speech_s": 7, "discard_head_ms": 300,
+ "window_ms": 50, "speech_percentile": 90, "clip_level": 0.999, "clip_run_min": 3,
+ "net_attempts": 20, "net_interval_ms": 500, "net_timeout_ms": 2000, "net_min_success": 5,
+ "sys_interval_ms": 1000, "tone_hz": 440, "tone_dbfs": -20, "tone_s": 2,
+ "discord_process_names": ["Discord.exe"], "results_dir": null}

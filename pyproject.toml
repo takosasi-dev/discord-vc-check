@@ -1,0 +1,27 @@
+[project]
+name = "vccheck"
+version = "0.1.0"
+description = "Discord(VcCheck): 通話の音の不具合を、Windows 側から測れる範囲で区間ごとに切り分ける"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+# 実行時に使うのは Python 標準ライブラリだけ。測定(録音)を実装する版から PySide6 を使う。
+dependencies = []
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+extend-exclude = ["spike", "results"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+files = ["vccheck"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+addopts = "-q"

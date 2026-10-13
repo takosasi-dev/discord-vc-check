@@ -1,0 +1,21 @@
+# 使い捨ての採取用コードと、実機の結果(デバイス名・ユーザー名を含みうる)
+spike/
+results/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# キャッシュ類
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# ビルドの出力
+build/
+dist/
+*.egg-info/
